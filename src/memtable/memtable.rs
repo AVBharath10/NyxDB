@@ -11,6 +11,15 @@ impl MemTable {
             map: BTreeMap::new(),
         }
     }
+    pub fn iter(&self) -> impl Iterator<Item = (&Vec<u8>, &Option<Vec<u8>>)> {
+        self.map.iter()
+    }
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
 
     pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) {
         self.map.insert(key, Some(value));
