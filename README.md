@@ -1,19 +1,29 @@
 # NyxDB
 
 NyxDB is a lightweight, embedded key-value storage engine written in Rust. It is designed to be a persistent, crash-safe database built from the ground up, implementing a Log-Structured Merge-tree (LSM-tree) architecture.
+(Because the world clearly needed **onew more** LSM-tree database.
 
 > [!NOTE]
 > This project is currently in the **starting stage** of development. Core components are implemented, but features like compaction, bloom filters, and advanced caching are planned for future updates.
 
 ## Features
 
--   **LSM-Tree Architecture**: Optimized for write-heavy workloads.
--   **Persistence**: Uses a Write-Ahead Log (WAL) to ensure data durability.
--   **Crash Recovery**: Automatically recovers state from the WAL upon restart.
--   **In-Memory Buffer**: Uses a MemTable for fast writes and recent reads.
--   **SSTables**: Flushes data to Sorted String Tables (SSTables) on disk when the MemTable fills up.
+- **LSM-tree based design**  
+  Writes go to memory first and hit disk sequentially, making NyxDB naturally suited for write-heavy workloads.
 
-## components
+- **Durable by default (WAL)**  
+  Every operation is written to a Write-Ahead Log before it’s applied, so data isn’t lost even if the process crashes midway.
+
+- **Crash recovery that actually works**  
+  On restart, NyxDB replays the WAL and rebuilds its state automatically — no manual intervention needed.
+
+- **In-memory buffering with MemTable**  
+  Recent writes live in memory using a sorted structure, keeping writes fast and reads efficient.
+
+- **Immutable SSTables on disk**  
+  When the MemTable fills up, its contents are flushed to disk as sorted, immutable SSTable files.
+
+## Components
 
 The project is structured into the following core modules:
 
@@ -50,17 +60,10 @@ fn main() -> std::io::Result<()> {
 
     // Delete the key
     db.delete(key)?;
-
     Ok(())
 }
 ```
 
-## Roadmap
-
-- [ ] Bloom Filters for faster lookups.
-- [ ] Leveled Compaction to reclaim space and optimize reads.
-- [ ] Block Cache for improved read performance.
-- [ ] Iterator support for range queries.
 
 ## Contributing
 
