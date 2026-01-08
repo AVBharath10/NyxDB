@@ -1,5 +1,6 @@
 pub mod db;
-pub mod wal;
-pub mod recov;
-pub mod memtable;
 pub mod error;
+pub mod memtable;
+pub mod recov;
+pub mod sstable;
+pub mod wal;
