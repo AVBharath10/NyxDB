@@ -1,7 +1,7 @@
 # NyxDB
 
 NyxDB is a lightweight, embedded key-value storage engine written in Rust. It is designed to be a persistent, crash-safe database built from the ground up, implementing a Log-Structured Merge-tree (LSM-tree) architecture.
-(Because the world clearly needed **onew more** LSM-tree database.
+(Because the world clearly needed **onew more** LSM tree database.
 
 > [!NOTE]
 > This project is currently in the **starting stage** of development. Core components are implemented, but features like compaction, bloom filters, and advanced caching are planned for future updates.
