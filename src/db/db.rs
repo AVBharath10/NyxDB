@@ -2,6 +2,9 @@ use crate::memtable::memtable::MemTable;
 use crate::recov::recovery::recover;
 use crate::sstable::sstable::{SSTableReader, SSTableWriter};
 use crate::wal::wal::Wal;
+
+use std::collections::BTreeMap;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 const MEMTABLE_MAX_ENTRIES: usize = 1000;
@@ -11,34 +14,31 @@ pub struct NyxDB {
     memtable: MemTable,
     next_sstable_id: u64,
     data_dir: PathBuf,
+    wal_path: PathBuf,
 }
 
 impl NyxDB {
     pub fn open<P: AsRef<Path>>(root: P) -> std::io::Result<Self> {
         let root = root.as_ref();
-
-        // 1. Create DB root directory
         std::fs::create_dir_all(root)?;
 
-        // 2. SSTable directory
         let sstable_dir = root.join("sstables");
         std::fs::create_dir_all(&sstable_dir)?;
 
-        // 3. WAL FILE path
         let wal_path = root.join("wal.log");
 
-        // 4. Recover MemTable from WAL
+        // Recover MemTable
         let memtable = recover(&wal_path)?;
 
-        // 5. Open WAL
+        // Open WAL
         let wal = Wal::open(&wal_path)?;
 
-        // 6. Recover next SSTable ID (VERY IMPORTANT)
+        // Recover next SSTable ID
         let mut next_sstable_id = 0;
         for entry in std::fs::read_dir(&sstable_dir)? {
             let entry = entry?;
             if let Some(stem) = entry.path().file_stem() {
-                if let Some(id) = stem.to_string_lossy().parse::<u64>().ok() {
+                if let Ok(id) = stem.to_string_lossy().parse::<u64>() {
                     next_sstable_id = next_sstable_id.max(id + 1);
                 }
             }
@@ -49,26 +49,22 @@ impl NyxDB {
             memtable,
             next_sstable_id,
             data_dir: sstable_dir,
+            wal_path,
         })
     }
-
-      // WRITE PATH
 
     pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> std::io::Result<()> {
         let mut record = Vec::new();
 
-        // PUT opcode
-        record.push(1);
+        record.push(1); // PUT
         record.extend_from_slice(&(key.len() as u32).to_le_bytes());
         record.extend_from_slice(&key);
         record.extend_from_slice(&(value.len() as u32).to_le_bytes());
         record.extend_from_slice(&value);
 
-        // WAL first
         self.wal.append(&record)?;
         self.wal.sync()?;
 
-        // MemTable
         self.memtable.put(key, value);
 
         if self.memtable.len() >= MEMTABLE_MAX_ENTRIES {
@@ -81,8 +77,7 @@ impl NyxDB {
     pub fn delete(&mut self, key: Vec<u8>) -> std::io::Result<()> {
         let mut record = Vec::new();
 
-        // DELETE opcode
-        record.push(2);
+        record.push(2); // DELETE
         record.extend_from_slice(&(key.len() as u32).to_le_bytes());
         record.extend_from_slice(&key);
 
@@ -98,18 +93,13 @@ impl NyxDB {
         Ok(())
     }
 
-       //READ PATH
-
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        // 1. MemTable
         if let Some(v) = self.memtable.get(key) {
             return Some(v.clone());
         }
 
-        // 2. SSTables (newest → oldest)
         for id in (0..self.next_sstable_id).rev() {
             let path = self.data_dir.join(format!("{:06}.sst", id));
-
             if !path.exists() {
                 continue;
             }
@@ -123,8 +113,6 @@ impl NyxDB {
         None
     }
 
-      // FLUSH LOGIC
-
     fn flush_memtable(&mut self) -> std::io::Result<()> {
         let path = self
             .data_dir
@@ -137,11 +125,67 @@ impl NyxDB {
         }
 
         writer.finish()?;
-
         self.memtable.clear();
         self.next_sstable_id += 1;
 
         Ok(())
     }
-}
 
+    pub fn compact(&mut self) -> std::io::Result<()> {
+        // Collect all SSTables (newest → oldest)
+        let mut paths = Vec::new();
+        for id in (0..self.next_sstable_id).rev() {
+            let path = self.data_dir.join(format!("{:06}.sst", id));
+            if path.exists() {
+                paths.push(path);
+            }
+        }
+
+        if paths.len() <= 1 {
+            return Ok(());
+        }
+
+        // Merge map (newest wins)
+        let mut merged: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
+
+        for path in paths.iter() {
+            let mut reader = SSTableReader::open(path)?;
+            for (key, value) in reader.iter_all()? {
+                if !merged.contains_key(&key) {
+                    merged.insert(key, value);
+                }
+            }
+        }
+
+        // Drop tombstones (safe: all SSTables compacted)
+        merged.retain(|_, v| v.is_some());
+
+        // Write compacted SSTable
+        let tmp_path = self.data_dir.join("compaction.tmp");
+        let mut writer = SSTableWriter::create(&tmp_path)?;
+
+        for (key, value) in merged {
+            writer.write_entry(&key, &value)?;
+        }
+
+        writer.finish()?;
+
+        // Delete old SSTables FIRST (simpler v1 safety)
+        for id in 0..self.next_sstable_id {
+            let path = self.data_dir.join(format!("{:06}.sst", id));
+            let _ = std::fs::remove_file(path);
+        }
+
+        // Install new SSTable
+        let final_path = self.data_dir.join("000000.sst");
+        std::fs::rename(tmp_path, final_path)?;
+
+        self.next_sstable_id = 1;
+
+        // Reset WAL (new baseline)
+        File::create(&self.wal_path)?;
+        self.wal = Wal::open(&self.wal_path)?;
+
+        Ok(())
+    }
+}

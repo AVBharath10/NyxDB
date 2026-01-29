@@ -1,1 +1,4 @@
 /target
+test_nyxdb.log
+/test_data
+/tests
