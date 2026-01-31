@@ -6,6 +6,10 @@ NyxDB is a lightweight, embedded key-value storage engine written in Rust. It is
 > [!NOTE]
 > This project is currently in the **starting stage** of development. Core components are implemented, but features like compaction, bloom filters, and advanced caching are planned for future updates.
 
+# Design Choices 
+<img width="977" height="373" alt="image" src="https://github.com/user-attachments/assets/98e45aee-2e1d-444e-bfb4-55951cd5af2c" />
+
+
 ## Features
 
 - **LSM-tree based design**  
