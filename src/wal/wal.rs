@@ -3,9 +3,9 @@ use std::io::{BufReader, Read};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-pub struct Wal {
-    writer: BufWriter<File>,
-}
+    pub struct Wal {
+        writer: BufWriter<File>,
+    }
 impl Wal {
     pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
