@@ -1,5 +1,5 @@
-use std::io::{self, Write};
 use nyxdb::db::db::NyxDB;
+use std::io::{self, Write};
 
 fn main() {
     let mut db = NyxDB::open("./nyx_cli_data").expect("Failed to open database");
@@ -55,12 +55,10 @@ fn main() {
                     Err(e) => println!("Error: {}", e),
                 }
             }
-            "compact" => {
-                match db.compact() {
-                    Ok(_) => println!("Compaction completed"),
-                    Err(e) => println!("Error during compaction: {}", e),
-                }
-            }
+            "compact" => match db.compact() {
+                Ok(_) => println!("Compaction completed"),
+                Err(e) => println!("Error during compaction: {}", e),
+            },
             "exit" | "quit" => break,
             _ => println!("Unknown command. Try: put, get, delete, compact, exit"),
         }

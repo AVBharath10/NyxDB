@@ -36,6 +36,7 @@ impl SSTableWriter {
 
     pub fn finish(mut self) -> std::io::Result<()> {
         self.writer.flush()?;
+        self.writer.get_ref().sync_all()?;
         Ok(())
     }
 }

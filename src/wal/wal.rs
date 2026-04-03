@@ -3,9 +3,10 @@ use std::io::{BufReader, Read};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-    pub struct Wal {
-        writer: BufWriter<File>,
-    }
+pub struct Wal {
+    writer: BufWriter<File>,
+}
+
 impl Wal {
     pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
@@ -34,8 +35,13 @@ impl Wal {
                 Ok(_) => {
                     let len = u32::from_le_bytes(len_buf) as usize;
                     let mut data = vec![0u8; len];
-                    reader.read_exact(&mut data)?;
-                    records.push(data);
+                    match reader.read_exact(&mut data) {
+                        Ok(_) => records.push(data),
+                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     break;

@@ -1,10 +1,11 @@
-use crate::memtable::memtable::MemTable;
+use crate::memtable::memtable::{LookupResult, MemTable};
 use crate::recov::recovery::recover;
 use crate::sstable::sstable::{SSTableReader, SSTableWriter};
 use crate::wal::wal::Wal;
 
 use std::collections::BTreeMap;
 use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
 
 const MEMTABLE_MAX_ENTRIES: usize = 1000;
@@ -94,8 +95,10 @@ impl NyxDB {
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        if let Some(v) = self.memtable.get(key) {
-            return Some(v.clone());
+        match self.memtable.lookup(key) {
+            LookupResult::Present => return self.memtable.get(key).cloned(),
+            LookupResult::Deleted => return None,
+            LookupResult::Absent => {}
         }
 
         for id in (0..self.next_sstable_id).rev() {
@@ -114,17 +117,28 @@ impl NyxDB {
     }
 
     fn flush_memtable(&mut self) -> std::io::Result<()> {
-        let path = self
+        if self.memtable.len() == 0 {
+            return Ok(());
+        }
+
+        let final_path = self
             .data_dir
             .join(format!("{:06}.sst", self.next_sstable_id));
+        let tmp_path = self
+            .data_dir
+            .join(format!("{:06}.sst.tmp", self.next_sstable_id));
 
-        let mut writer = SSTableWriter::create(&path)?;
+        let mut writer = SSTableWriter::create(&tmp_path)?;
 
         for (key, value) in self.memtable.iter() {
             writer.write_entry(key, value)?;
         }
 
         writer.finish()?;
+        std::fs::rename(&tmp_path, &final_path)?;
+        sync_dir(&self.data_dir)?;
+
+        self.reset_wal()?;
         self.memtable.clear();
         self.next_sstable_id += 1;
 
@@ -132,6 +146,8 @@ impl NyxDB {
     }
 
     pub fn compact(&mut self) -> std::io::Result<()> {
+        self.flush_memtable()?;
+
         // Collect all SSTables (newest → oldest)
         let mut paths = Vec::new();
         for id in (0..self.next_sstable_id).rev() {
@@ -160,8 +176,12 @@ impl NyxDB {
         // Drop tombstones (safe: all SSTables compacted)
         merged.retain(|_, v| v.is_some());
 
-        // Write compacted SSTable
-        let tmp_path = self.data_dir.join("compaction.tmp");
+        // Install compacted SSTable as the newest table first so crashes do not lose older data.
+        let compacted_id = self.next_sstable_id;
+        let tmp_path = self
+            .data_dir
+            .join(format!("{:06}.sst.compaction.tmp", compacted_id));
+        let final_path = self.data_dir.join(format!("{:06}.sst", compacted_id));
         let mut writer = SSTableWriter::create(&tmp_path)?;
 
         for (key, value) in merged {
@@ -169,23 +189,26 @@ impl NyxDB {
         }
 
         writer.finish()?;
+        std::fs::rename(&tmp_path, &final_path)?;
+        sync_dir(&self.data_dir)?;
 
-        // Delete old SSTables FIRST (simpler v1 safety)
         for id in 0..self.next_sstable_id {
             let path = self.data_dir.join(format!("{:06}.sst", id));
             let _ = std::fs::remove_file(path);
         }
-
-        // Install new SSTable
-        let final_path = self.data_dir.join("000000.sst");
-        std::fs::rename(tmp_path, final_path)?;
-
-        self.next_sstable_id = 1;
-
-        // Reset WAL (new baseline)
-        File::create(&self.wal_path)?;
-        self.wal = Wal::open(&self.wal_path)?;
+        sync_dir(&self.data_dir)?;
+        self.next_sstable_id = compacted_id + 1;
 
         Ok(())
     }
+
+    fn reset_wal(&mut self) -> io::Result<()> {
+        File::create(&self.wal_path)?;
+        self.wal = Wal::open(&self.wal_path)?;
+        Ok(())
+    }
+}
+
+fn sync_dir(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
 }
